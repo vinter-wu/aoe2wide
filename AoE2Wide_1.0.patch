@@ -175,7 +175,21 @@ drspos=0027BE90
 000EA8ED  1024    H        test for the Conquerors text                                
 000EA8FB   768   dV   733  Y of the Conquerors overlay                                 
 000EA91A   600   dV   572  Y of the Conquerors overlay                                 
-000ED730  1280    H        test                                                        
+000ED730  1280    H        test
+000ED748  1024   dV   852  Candidate replay UI control Y
+000ED75E  1024   dV   885  Candidate replay UI control Y
+000ED774  1024   dV   905  Candidate replay UI control Y
+000ED78A  1024   dV   925  Candidate replay UI control Y
+000ED7A0  1024   dV   885  Candidate replay UI control Y
+000ED7B6  1024   dV   905  Candidate replay UI control Y
+000ED7CC  1024   dV   925  Candidate replay UI control Y
+000ED7E2  1024   dV   907  Candidate replay UI control Y
+000ED7FB  1024   dV   964  Candidate replay UI control Y
+000ED811  1024   dV   964  Candidate replay UI control Y
+000ED827  1024   dV   964  Candidate replay UI control Y
+000ED842  1024   dV   964  Candidate replay UI control Y
+000ED859  1024   dV   964  Candidate replay UI control Y
+000ED872  1024   dV   964  Candidate replay UI control Y                                                        
 000ED889  1024    H        test                                                        
 000F7911   800    H        set                                                         
 000F7934  1024    H        set                                                         
