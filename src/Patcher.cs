@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace AoE2Wide
@@ -32,6 +33,10 @@ namespace AoE2Wide
     static class Patcher
     {
         static readonly uint[] Resolutions = new uint[] { 200, 320, 480, 640, 600, 768, 800, 1024, 1200, 1280, 1600 };
+        private const int RtString = 6;
+        private const ushort NeutralLanguage = 0;
+        private const uint LoadLibraryAsDataFile = 0x00000002;
+        private const uint LoadLibraryAsImageResource = 0x00000020;
 
         static public void ListEm(byte[] exe)
         {
@@ -405,35 +410,9 @@ namespace AoE2Wide
 
         static public void PatchResolutions(byte[] exe, int oldWidth, int oldHeight, int newWidth, int newHeight, Patch patch)
         {
-            // Create the map so, that originally larger resolutions stay larger even after patching. They _may_ become invalid though.
-            // This is necessary to keep the internal (in AoE) if > else if > else if > code working.
-            var hmap = new Dictionary<int, int>();
-            var existingWidths = new[] { 800, 1024, 1280, 1600 };
-            var wshift = newWidth;
-            foreach (var w in existingWidths)
-            {
-                if (w == oldWidth)
-                    hmap[w] = newWidth;
-                else if (w > oldWidth)
-                    hmap[w] = ++wshift;
-            }
-
-            var vmap = new Dictionary<int, int>();
-            var existingHeights = new[] { 600, 768, 1024, 1200 };
-            var hshift = newHeight;
-            foreach (var h in existingHeights)
-            {
-                if (h == oldHeight)
-                    vmap[h] = newHeight;
-                else if (h > oldHeight)
-                    vmap[h] = ++hshift;
-            }
-
-            foreach (var pair in hmap)
-                UserFeedback.Trace(string.Format(@"Horizontal {0} => {1}", pair.Key, pair.Value));
-
-            foreach (var pair in vmap)
-                UserFeedback.Trace(string.Format(@"Vertical {0} => {1}", pair.Key, pair.Value));
+            Dictionary<int, int> hmap;
+            Dictionary<int, int> vmap;
+            CreateResolutionMaps(oldWidth, oldHeight, newWidth, newHeight, out hmap, out vmap);
 
             foreach (var item in patch.Items)
             {
@@ -514,6 +493,259 @@ namespace AoE2Wide
                 exe[item.Pos + 2] = b2;
                 exe[item.Pos + 3] = b3;
             }
+        }
+
+        private static void CreateResolutionMaps(int oldWidth, int oldHeight, int newWidth, int newHeight,
+                                                 out Dictionary<int, int> hmap, out Dictionary<int, int> vmap)
+        {
+            // Create the map so, that originally larger resolutions stay larger even after patching. They _may_ become invalid though.
+            // This is necessary to keep the internal (in AoE) if > else if > else if > code working.
+            hmap = new Dictionary<int, int>();
+            var existingWidths = new[] { 800, 1024, 1280, 1600 };
+            var wshift = newWidth;
+            foreach (var w in existingWidths)
+            {
+                if (w == oldWidth)
+                    hmap[w] = newWidth;
+                else if (w > oldWidth)
+                    hmap[w] = ++wshift;
+            }
+
+            vmap = new Dictionary<int, int>();
+            var existingHeights = new[] { 600, 768, 1024, 1200 };
+            var hshift = newHeight;
+            foreach (var h in existingHeights)
+            {
+                if (h == oldHeight)
+                    vmap[h] = newHeight;
+                else if (h > oldHeight)
+                    vmap[h] = ++hshift;
+            }
+
+            foreach (var pair in hmap)
+                UserFeedback.Trace(string.Format(@"Horizontal {0} => {1}", pair.Key, pair.Value));
+
+            foreach (var pair in vmap)
+                UserFeedback.Trace(string.Format(@"Vertical {0} => {1}", pair.Key, pair.Value));
+        }
+
+        public static void PatchLanguageDll(string dllPath, int oldWidth, int oldHeight, int newWidth, int newHeight)
+        {
+            Dictionary<int, int> hmap;
+            Dictionary<int, int> vmap;
+            CreateResolutionMaps(oldWidth, oldHeight, newWidth, newHeight, out hmap, out vmap);
+
+            var replacements = new Dictionary<int, string>();
+            AddResolutionString(replacements, 9448, 800, 600, hmap, vmap);
+            AddResolutionString(replacements, 9449, 1024, 768, hmap, vmap);
+            AddResolutionString(replacements, 9454, 1280, 1024, hmap, vmap);
+            AddResolutionString(replacements, 9522, 800, 600, hmap, vmap);
+            AddResolutionString(replacements, 9523, 1024, 768, hmap, vmap);
+            AddResolutionString(replacements, 9524, 1280, 1024, hmap, vmap);
+            AddResolutionString(replacements, 31154, 800, 600, hmap, vmap);
+            AddResolutionString(replacements, 31155, 1024, 768, hmap, vmap);
+            AddResolutionString(replacements, 31156, 1280, 1024, hmap, vmap);
+
+            var blocks = new Dictionary<int, string[]>();
+            var module = NativeMethods.LoadLibraryEx(dllPath, IntPtr.Zero,
+                                                     LoadLibraryAsDataFile | LoadLibraryAsImageResource);
+            if (module == IntPtr.Zero)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                    string.Format("Could not load language resource file '{0}'", dllPath));
+
+            try
+            {
+                foreach (var replacement in replacements)
+                {
+                    var blockId = replacement.Key / 16 + 1;
+                    string[] strings;
+                    if (!blocks.TryGetValue(blockId, out strings))
+                    {
+                        var resourceName = new IntPtr(blockId);
+                        var resource = NativeMethods.FindResourceEx(module, new IntPtr(RtString), resourceName,
+                                                                    NeutralLanguage);
+                        if (resource == IntPtr.Zero)
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                                string.Format("Could not find string resource block {0}", blockId));
+
+                        var size = NativeMethods.SizeofResource(module, resource);
+                        var loadedResource = NativeMethods.LoadResource(module, resource);
+                        var resourceData = loadedResource == IntPtr.Zero
+                                               ? IntPtr.Zero
+                                               : NativeMethods.LockResource(loadedResource);
+                        if (size == 0 || resourceData == IntPtr.Zero)
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                                string.Format("Could not read string resource block {0}", blockId));
+
+                        var bytes = new byte[checked((int)size)];
+                        Marshal.Copy(resourceData, bytes, 0, bytes.Length);
+                        strings = ReadStringTable(bytes, blockId);
+                        blocks.Add(blockId, strings);
+                    }
+
+                    var slot = replacement.Key % 16;
+                    strings[slot] = ReplaceResolutionText(strings[slot], replacement.Value, replacement.Key);
+                }
+            }
+            finally
+            {
+                NativeMethods.FreeLibrary(module);
+            }
+
+            var update = NativeMethods.BeginUpdateResource(dllPath, false);
+            if (update == IntPtr.Zero)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                    string.Format("Could not begin updating '{0}'", dllPath));
+
+            try
+            {
+                foreach (var block in blocks)
+                {
+                    var bytes = WriteStringTable(block.Value);
+                    var resourceName = new IntPtr(block.Key);
+                    if (!NativeMethods.UpdateResource(update, new IntPtr(RtString), resourceName,
+                                                      NeutralLanguage, bytes, (uint)bytes.Length))
+                        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                            string.Format("Could not update string resource block {0}", block.Key));
+                }
+
+                if (!NativeMethods.EndUpdateResource(update, false))
+                {
+                    update = IntPtr.Zero;
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
+                        string.Format("Could not save updated resources to '{0}'", dllPath));
+                }
+                update = IntPtr.Zero;
+                UserFeedback.Info(@"Updated resolution labels in '{0}'", dllPath);
+            }
+            finally
+            {
+                if (update != IntPtr.Zero)
+                    NativeMethods.EndUpdateResource(update, true);
+            }
+        }
+
+        private static void AddResolutionString(IDictionary<int, string> replacements, int stringId,
+                                                int originalWidth, int originalHeight,
+                                                IDictionary<int, int> hmap, IDictionary<int, int> vmap)
+        {
+            int mappedWidth;
+            int mappedHeight;
+            if (!hmap.TryGetValue(originalWidth, out mappedWidth))
+                mappedWidth = originalWidth;
+            if (!vmap.TryGetValue(originalHeight, out mappedHeight))
+                mappedHeight = originalHeight;
+            replacements.Add(stringId, string.Format("{0} x {1}", mappedWidth, mappedHeight));
+        }
+
+        private static string ReplaceResolutionText(string text, string resolution, int stringId)
+        {
+            var start = -1;
+            var end = -1;
+            for (var i = 0; i < text.Length; i++)
+            {
+                if (!char.IsDigit(text[i]))
+                    continue;
+                var numberEnd = i;
+                while (numberEnd < text.Length && char.IsDigit(text[numberEnd]))
+                    numberEnd++;
+                var separator = numberEnd;
+                while (separator < text.Length && text[separator] == ' ')
+                    separator++;
+                if (separator >= text.Length || text[separator] != 'x')
+                {
+                    i = numberEnd - 1;
+                    continue;
+                }
+                separator++;
+                while (separator < text.Length && text[separator] == ' ')
+                    separator++;
+                if (separator >= text.Length || !char.IsDigit(text[separator]))
+                {
+                    i = numberEnd - 1;
+                    continue;
+                }
+                end = separator;
+                while (end < text.Length && char.IsDigit(text[end]))
+                    end++;
+                if (start >= 0)
+                    throw new InvalidDataException(string.Format("String resource {0} contains multiple resolutions", stringId));
+                start = i;
+                i = end - 1;
+            }
+
+            if (start < 0)
+                throw new InvalidDataException(string.Format("String resource {0} does not contain a resolution", stringId));
+            return text.Substring(0, start) + resolution + text.Substring(end);
+        }
+
+        private static string[] ReadStringTable(byte[] bytes, int blockId)
+        {
+                var strings = new string[16];
+                var offset = 0;
+                for (var i = 0; i < strings.Length; i++)
+                {
+                    if (offset + 2 > bytes.Length)
+                        throw new InvalidDataException(string.Format("String resource block {0} is truncated", blockId));
+                    var length = BitConverter.ToUInt16(bytes, offset);
+                    offset += 2;
+                    var byteLength = length * 2;
+                    if (offset + byteLength > bytes.Length)
+                        throw new InvalidDataException(string.Format("String resource block {0} is truncated", blockId));
+                    strings[i] = Encoding.Unicode.GetString(bytes, offset, byteLength);
+                    offset += byteLength;
+                }
+                if (offset != bytes.Length)
+                    throw new InvalidDataException(string.Format("String resource block {0} has unexpected trailing data", blockId));
+                return strings;
+        }
+
+        private static byte[] WriteStringTable(IEnumerable<string> strings)
+        {
+                using (var stream = new MemoryStream())
+                using (var writer = new BinaryWriter(stream, Encoding.Unicode))
+                {
+                    foreach (var text in strings)
+                    {
+                        var bytes = Encoding.Unicode.GetBytes(text);
+                        if (bytes.Length / 2 > ushort.MaxValue)
+                            throw new InvalidDataException("A string resource is too long");
+                        writer.Write((ushort)(bytes.Length / 2));
+                        writer.Write(bytes);
+                    }
+                    return stream.ToArray();
+                }
+        }
+
+        private static class NativeMethods
+        {
+                [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+                internal static extern IntPtr LoadLibraryEx(string fileName, IntPtr file, uint flags);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern bool FreeLibrary(IntPtr module);
+
+                [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+                internal static extern IntPtr FindResourceEx(IntPtr module, IntPtr type, IntPtr name, ushort language);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern IntPtr LoadResource(IntPtr module, IntPtr resource);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern IntPtr LockResource(IntPtr resource);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern uint SizeofResource(IntPtr module, IntPtr resource);
+
+                [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+                internal static extern IntPtr BeginUpdateResource(string fileName, bool deleteExistingResources);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern bool UpdateResource(IntPtr update, IntPtr type, IntPtr name,
+                                                           ushort language, byte[] data, uint dataSize);
+
+                [DllImport("kernel32.dll", SetLastError = true)]
+                internal static extern bool EndUpdateResource(IntPtr update, bool discard);
         }
 
     }

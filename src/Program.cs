@@ -344,6 +344,8 @@ namespace AoE2Wide
                     UserFeedback.Info(
                         @"Auto patching for all current screen sizes. Note that the game will always use the primary screen!");
                     var doneList = new HashSet<int>();
+                    var primaryBounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
+                    var primaryKey = primaryBounds.Width + (primaryBounds.Height * 65536);
                     foreach (var screen in System.Windows.Forms.Screen.AllScreens)
                     {
                         try
@@ -352,7 +354,7 @@ namespace AoE2Wide
                             newHeight = screen.Bounds.Height;
                             var key = newWidth + (newHeight * 65536);
                             if (doneList.Add(key))
-                                PatchExecutable(newWidth, newHeight, patch);
+                                PatchExecutable(newWidth, newHeight, patch, key == primaryKey);
                         }
                         catch (Exception e)
                         {
@@ -362,7 +364,7 @@ namespace AoE2Wide
                 }
                 else
                 {
-                    PatchExecutable(newWidth, newHeight, patch);
+                    PatchExecutable(newWidth, newHeight, patch, true);
                 }
             }
             catch (Exception e)
@@ -495,7 +497,7 @@ namespace AoE2Wide
             UserFeedback.Trace("  to try to create fresh patch files for all your age2_x1 executables, from the RootPatch file");
         }
 
-        private static void PatchExecutable(int newWidth, int newHeight, Patch patch)
+        private static void PatchExecutable(int newWidth, int newHeight, Patch patch, bool updateLanguageLabels)
         {
             try
             {
@@ -625,6 +627,30 @@ namespace AoE2Wide
                     else
                     {
                         PatchADrs(_orgX1DrsPath, newX1DrsName, oldWidth, oldHeight, newWidth, newHeight);
+                    }
+                }
+
+                if (updateLanguageLabels)
+                {
+                    var languageDllPath = Path.Combine(_gameDirectory, @"language.dll");
+                    if (!File.Exists(languageDllPath))
+                    {
+                        UserFeedback.Warning(@"Could not find '{0}'. Resolution labels were not updated.", languageDllPath);
+                    }
+                    else
+                    {
+                        var languageDllBackupPath = languageDllPath + ".bak";
+                        if (!File.Exists(languageDllBackupPath))
+                        {
+                            File.Copy(languageDllPath, languageDllBackupPath);
+                            UserFeedback.Info(@"Backed up original language DLL to '{0}'", languageDllBackupPath);
+                        }
+                        else
+                        {
+                            UserFeedback.Trace(@"Keeping existing language DLL backup '{0}'", languageDllBackupPath);
+                        }
+
+                        Patcher.PatchLanguageDll(languageDllPath, oldWidth, oldHeight, newWidth, newHeight);
                     }
                 }
 
