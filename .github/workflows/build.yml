@@ -2,25 +2,31 @@ name: Build
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
   pull_request:
-    branches: [main, master]
+    branches: [master]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - uses: microsoft/setup-msbuild@v2
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-      - name: Build Release
-        run: msbuild src\AoE2Wide.sln /m /p:Configuration=Release
+      - name: Build AoE2Wide
+        run: msbuild .\src\AoE2Wide.csproj /m /p:Configuration=Release
 
-      - name: Upload build artifact
+      - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
           name: AoE2Wide-Release
-          path: src\bin\Release\AoE2Wide.exe
+          path: src/bin/Release/**
+          if-no-files-found: error
